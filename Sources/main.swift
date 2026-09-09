@@ -20,6 +20,7 @@ final class PetView: NSView {
     var model: Motion!
     var now = 0.0
     var lastVisual = ""
+    var workloadCount: Int?
     override var isOpaque: Bool { false }
     override init(frame: CGRect) { super.init(frame:frame) }
     required init?(coder:NSCoder){fatalError()}
@@ -36,7 +37,8 @@ final class PetView: NSView {
     func refresh() {
         let (r,c)=visualFrame()
         let key="\(r)-\(c)-\(model.position.x)-\(model.position.y)-\(model.flight != nil)"
-        if model.flight != nil || key != lastVisual { needsDisplay=true;lastVisual=key }
+        let workshopKey=key+"-\(workloadCount ?? -1)-\(model.reducedMotion)"
+        if model.flight != nil || ((workloadCount ?? 0)>0 && !model.reducedMotion) || workshopKey != lastVisual { needsDisplay=true;lastVisual=workshopKey }
     }
     override func draw(_ dirtyRect:NSRect) {
         NSColor.clear.setFill();dirtyRect.fill(using:.copy)
@@ -44,6 +46,7 @@ final class PetView: NSView {
         let p=model.position
         let f=model.flight
         let progress=f?.progress(now) ?? 1
+        if f == nil, let count=workloadCount { drawForge(at:p,count:count,time:now,reducedMotion:model.reducedMotion) }
         let quietAlpha: CGFloat = f?.ability == .quiet ? CGFloat(abs(progress-0.5)*2) : 1
         // A short tether is only visible during the middle of a swing.
         if let f=f, f.ability == .swing, progress > 0.06,progress < 0.88 {
@@ -93,6 +96,14 @@ final class AppDelegate:NSObject,NSApplicationDelegate {
     var autoReduceItem:NSMenuItem!
     var forceReduced=false
     var tickInterval=1.0/30
+    var workloadMonitor=WorkloadMonitor()
+    var workloadItem:NSMenuItem!
+    var reactItem:NSMenuItem!
+    var reactToWorkload=true
+    var lastWorkload=WorkloadSnapshot.unavailable
+    var lastWorkloadAt=0.0
+    var previewCount:Int?
+    var previewUntil=0.0
     func applicationDidFinishLaunching(_ notification:Notification) {
         NSApp.setActivationPolicy(.accessory)
         buildMenu()
@@ -102,6 +113,7 @@ final class AppDelegate:NSObject,NSApplicationDelegate {
         previousCursor=V(x:cursor.x,y:cursor.y);previousTime=CACurrentMediaTime()
         panel.orderFrontRegardless()
         setTimer(interval:1.0/30)
+        startWorkload()
         NotificationCenter.default.addObserver(self,selector:#selector(displaysChanged),name:NSApplication.didChangeScreenParametersNotification,object:nil)
         NSWorkspace.shared.notificationCenter.addObserver(self,selector:#selector(willSleep),name:NSWorkspace.willSleepNotification,object:nil)
         NSWorkspace.shared.notificationCenter.addObserver(self,selector:#selector(willSleep),name:NSWorkspace.screensDidSleepNotification,object:nil)
@@ -141,6 +153,14 @@ final class AppDelegate:NSObject,NSApplicationDelegate {
         previousCursor=global;previousTime=now
         pet.model.reducedMotion=forceReduced || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let reduced=pet.model.reducedMotion
+        if previewCount != nil && now>=previewUntil { previewCount=nil }
+        if let preview=previewCount {
+            pet.workloadCount=preview
+            workloadItem.title="Preview: " + WorkloadSnapshot.active(preview).status
+        } else {
+            let snapshot = !reactToWorkload ? WorkloadSnapshot.disabled : now-lastWorkloadAt>8 ? .unavailable:lastWorkload
+            pet.workloadCount=snapshot.activeCount;workloadItem.title=snapshot.status
+        }
         autoReduceItem.state=forceReduced ? .on:.off
         if !paused && !hideDuringSleep {
             pet.model.update(now:now,cursor:cursor,velocity:velocity)
@@ -150,7 +170,7 @@ final class AppDelegate:NSObject,NSApplicationDelegate {
         if desired != tickInterval { setTimer(interval:desired) }
         if let url=qaURL,now-lastQA > 0.20 {
             lastQA=now
-            let state:[String:Any]=["pid":ProcessInfo.processInfo.processIdentifier,"position":[pet.model.position.x+panel.frame.minX,pet.model.position.y+panel.frame.minY],"panel":[panel.frame.minX,panel.frame.minY,panel.frame.width,panel.frame.height],"safeBounds":[pet.model.bounds.minX,pet.model.bounds.minY,pet.model.bounds.width,pet.model.bounds.height],"escapeCount":pet.model.escapeCount,"swings":pet.model.swingCount,"dashes":pet.model.dashCount,"ability":pet.model.lastAbility,"moving":pet.model.flight != nil,"paused":paused,"reducedMotion":reduced,"clickThrough":panel.ignoresMouseEvents,"canBecomeKey":panel.canBecomeKey,"frontmostApp":NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "","testClicks":testClicks,"screenCount":NSScreen.screens.count]
+            let state:[String:Any]=["pid":ProcessInfo.processInfo.processIdentifier,"position":[pet.model.position.x+panel.frame.minX,pet.model.position.y+panel.frame.minY],"panel":[panel.frame.minX,panel.frame.minY,panel.frame.width,panel.frame.height],"safeBounds":[pet.model.bounds.minX,pet.model.bounds.minY,pet.model.bounds.width,pet.model.bounds.height],"escapeCount":pet.model.escapeCount,"swings":pet.model.swingCount,"dashes":pet.model.dashCount,"ability":pet.model.lastAbility,"moving":pet.model.flight != nil,"paused":paused,"reducedMotion":reduced,"clickThrough":panel.ignoresMouseEvents,"canBecomeKey":panel.canBecomeKey,"frontmostApp":NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "","testClicks":testClicks,"screenCount":NSScreen.screens.count,"activeTasks":pet.workloadCount as Any? ?? NSNull(),"workloadStatus":workloadItem.title,"workshopVisible":pet.workloadCount != nil && pet.model.flight == nil]
             if let data=try? JSONSerialization.data(withJSONObject:state,options:[.prettyPrinted,.sortedKeys]) {try? data.write(to:url,options:.atomic)}
         }
     }
@@ -161,6 +181,17 @@ final class AppDelegate:NSObject,NSApplicationDelegate {
         let menu=NSMenu()
         let title=NSMenuItem(title:"MechaPets",action:nil,keyEquivalent:"");menu.addItem(title)
         let subtitle=NSMenuItem(title:"Swings and dashes out of your way",action:nil,keyEquivalent:"");menu.addItem(subtitle)
+        menu.addItem(.separator())
+        workloadItem=NSMenuItem(title:"Connecting to local Codex…",action:nil,keyEquivalent:"");menu.addItem(workloadItem)
+        reactToWorkload=UserDefaults.standard.object(forKey:"reactToWorkload") as? Bool ?? true
+        reactItem=add(menu,"React to Codex workload",#selector(toggleWorkload));reactItem.state=reactToWorkload ? .on:.off
+        add(menu,"Choose Codex data folder…",#selector(chooseCodexHome))
+        let previews=NSMenuItem(title:"Preview workshop",action:nil,keyEquivalent:"")
+        let previewMenu=NSMenu()
+        for (title,count) in [("Idle · 0 tasks",0),("Calm · 1 task",1),("Busy · 2 tasks",2),("Frenzy · 3+ tasks",3)] {
+            let item=add(previewMenu,title,#selector(previewWorkshop));item.representedObject=count
+        }
+        previews.submenu=previewMenu;menu.addItem(previews)
         menu.addItem(.separator())
         pauseItem=add(menu,"Pause & hide pet",#selector(togglePause))
         add(menu,"Bring pet to this screen",#selector(bringHere))
@@ -179,6 +210,34 @@ final class AppDelegate:NSObject,NSApplicationDelegate {
     @discardableResult func add(_ menu:NSMenu,_ title:String,_ action:Selector,key:String="") -> NSMenuItem {
         let item=NSMenuItem(title:title,action:action,keyEquivalent:key);item.target=self;menu.addItem(item);return item
     }
+    func startWorkload() {
+        workloadMonitor.stop()
+        guard reactToWorkload && !hideDuringSleep else {return}
+        let home=UserDefaults.standard.string(forKey:"codexDataFolder").map {URL(fileURLWithPath:$0,isDirectory:true)} ?? WorkloadReader.defaultHome
+        workloadMonitor=WorkloadMonitor(home:home)
+        workloadMonitor.start { [weak self] snapshot in
+            guard let self=self else{return};self.lastWorkload=snapshot;self.lastWorkloadAt=CACurrentMediaTime()
+        }
+    }
+    @objc func toggleWorkload() {
+        reactToWorkload.toggle();previewCount=nil
+        UserDefaults.standard.set(reactToWorkload,forKey:"reactToWorkload")
+        reactItem.state=reactToWorkload ? .on:.off
+        lastWorkload = .unavailable;lastWorkloadAt=0
+        startWorkload()
+    }
+    @objc func chooseCodexHome() {
+        let picker=NSOpenPanel();picker.canChooseDirectories=true;picker.canChooseFiles=false
+        picker.allowsMultipleSelection=false;picker.showsHiddenFiles=true
+        picker.message="Choose your Codex data folder (normally ~/.codex). Only local task status metadata is read."
+        if picker.runModal() == .OK,let url=picker.url {
+            UserDefaults.standard.set(url.path,forKey:"codexDataFolder");lastWorkload = .unavailable;lastWorkloadAt=0;startWorkload()
+        }
+    }
+    @objc func previewWorkshop(_ sender:NSMenuItem) {
+        previewCount=sender.representedObject as? Int;previewUntil=CACurrentMediaTime()+12
+        if paused {togglePause()}
+    }
     @objc func togglePause(){paused.toggle();pauseItem.title=paused ? "Resume pet":"Pause & hide pet";if paused{panel.orderOut(nil);pet.model.flight=nil}else{panel.orderFrontRegardless();pet.model.armed=true}}
     @objc func toggleReduced(){forceReduced.toggle();UserDefaults.standard.set(forceReduced,forKey:"gentleMotion");pet.model.flight=nil}
     @objc func changeMode(_ sender:NSMenuItem){let value=sender.representedObject as! String;pet.model.mode=value;UserDefaults.standard.set(value,forKey:"mode");sender.menu?.items.forEach{$0.state = $0===sender ? .on:.off}}
@@ -189,8 +248,8 @@ final class AppDelegate:NSObject,NSApplicationDelegate {
     @objc func bringHere(){let cursor=NSEvent.mouseLocation;if let target=NSScreen.screens.first(where:{$0.frame.contains(cursor)}){screen=target;relocate()}}
     @objc func displaysChanged(){screen=NSScreen.screens.first(where:{$0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? AnyHashable == screenID}) ?? NSScreen.main ?? NSScreen.screens.first;guard screen != nil else{return};relocate()}
     func relocate(){screenID=screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? AnyHashable;panel.setFrame(screen.visibleFrame,display:false);pet.frame=CGRect(origin:.zero,size:screen.visibleFrame.size);pet.model.resize(safeBounds(pet.bounds));pet.needsDisplay=true}
-    @objc func willSleep(){hideDuringSleep=true;panel.orderOut(nil);timer?.invalidate()}
-    @objc func didWake(){hideDuringSleep=false;previousTime=CACurrentMediaTime();velocity=V(x:0,y:0);pet.model.flight=nil;displaysChanged();if !paused{panel.orderFrontRegardless()};setTimer(interval:1.0/30)}
+    @objc func willSleep(){hideDuringSleep=true;panel.orderOut(nil);timer?.invalidate();workloadMonitor.stop()}
+    @objc func didWake(){hideDuringSleep=false;previousTime=CACurrentMediaTime();velocity=V(x:0,y:0);pet.model.flight=nil;displaysChanged();if !paused{panel.orderFrontRegardless()};setTimer(interval:1.0/30);lastWorkloadAt=0;startWorkload()}
     @objc func quit(){NSApp.terminate(nil)}
     func showTestWindow(){
         let rect=screen.visibleFrame.insetBy(dx:25,dy:25)
@@ -202,19 +261,35 @@ final class AppDelegate:NSObject,NSApplicationDelegate {
     @objc func testClick(){testClicks+=1;(testWindow?.contentView as? NSButton)?.title="Click received: \(testClicks)\nMove toward the pet again. It will give you room."}
 }
 
-if args.contains("--self-test") { runTests();exit(0) }
+if args.contains("--self-test") { runTests();runWorkloadTests();exit(0) }
+if args.contains("--workload-status") {
+    let result=WorkloadReader(home:WorkloadReader.defaultHome).sample()
+    print(String(data:try! JSONEncoder().encode(result),encoding:.utf8)!)
+    exit(result.activeCount == nil ? 1:0)
+}
+if let i=args.firstIndex(of:"--render-forge-animation"),i+1<args.count { renderForgeAnimation(to:args[i+1]);exit(0) }
+if let i=args.firstIndex(of:"--render-forge-preview"),i+1<args.count { renderForgePreview(to:args[i+1]);exit(0) }
 if let i=args.firstIndex(of:"--render-preview"),i+1<args.count { renderPreview(to:args[i+1]);exit(0) }
 if args.contains("--ui-smoke-test") {
     let app=NSApplication.shared
     let previousFront=NSWorkspace.shared.frontmostApplication?.bundleIdentifier
     let defaults=UserDefaults.standard
-    let saved=["radius","mode","gentleMotion"].map { ($0,defaults.object(forKey:$0)) }
+    let saved=["radius","mode","gentleMotion","reactToWorkload"].map { ($0,defaults.object(forKey:$0)) }
     let d=AppDelegate();app.delegate=d
     d.applicationDidFinishLaunching(Notification(name:NSApplication.didFinishLaunchingNotification))
     precondition(d.panel.ignoresMouseEvents && !d.panel.canBecomeKey && !d.panel.canBecomeMain)
     precondition(NSWorkspace.shared.frontmostApplication?.bundleIdentifier == previousFront,"Overlay stole focus")
     let menu=d.status.menu!
     func invoke(_ title:String) { menu.performActionForItem(at:menu.items.firstIndex(where:{$0.title==title})!) }
+    let previewMenu=menu.items.first(where:{$0.title=="Preview workshop"})!.submenu!
+    for count in 0...3 {
+        previewMenu.performActionForItem(at:count);d.tick()
+        precondition(d.pet.workloadCount==count && d.workloadItem.title.hasPrefix("Preview:"))
+    }
+    d.previewCount=nil;d.lastWorkload = .active(2);d.lastWorkloadAt=CACurrentMediaTime();d.reactToWorkload=true;d.tick()
+    precondition(d.pet.workloadCount==2)
+    invoke("React to Codex workload");d.tick();precondition(d.pet.workloadCount==nil)
+    invoke("React to Codex workload");d.lastWorkload = .active(3);d.lastWorkloadAt=CACurrentMediaTime()-10;d.tick();precondition(d.pet.workloadCount==nil)
     invoke("Pause & hide pet");precondition(d.paused && !d.panel.isVisible)
     invoke("Resume pet");precondition(!d.paused && d.panel.isVisible)
     invoke("Show a swing");precondition(d.pet.model.flight?.ability == .swing)
@@ -229,7 +304,7 @@ if args.contains("--ui-smoke-test") {
     d.didWake();precondition(d.panel.isVisible && !d.hideDuringSleep)
     precondition(NSWorkspace.shared.frontmostApplication?.bundleIdentifier == previousFront,"Controls stole focus")
     for (key,value) in saved { if let value=value { defaults.set(value,forKey:key) } else { defaults.removeObject(forKey:key) } }
-    defaults.synchronize();d.panel.orderOut(nil);d.timer?.invalidate()
+    defaults.synchronize();d.panel.orderOut(nil);d.timer?.invalidate();d.workloadMonitor.stop()
     print("PASS: native menu dispatch, pause/resume visibility, swing/dash actions, gentle mode, ability and radius selection, sleep/wake handlers, click-through flags and foreground-app retention.")
     exit(0)
 }

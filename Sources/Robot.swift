@@ -11,7 +11,10 @@ extension PetView {
         let highlight=NSColor(calibratedRed:0.66,green:0.96,blue:0.86,alpha:1)
         let orange=NSColor(calibratedRed:1,green:0.65,blue:0.25,alpha:1)
         let airborne=row==4 && (frame==1 || frame==2)
-        let bob:CGFloat = row==0 ? (frame==1 || frame==4 ? 1:0):0
+        let forging = model.flight == nil && (workloadCount ?? 0) > 0
+        let forge = ForgeStyle(count: workloadCount ?? 0)
+        let lift = forge.hammerLift(at: now, reducedMotion: model.reducedMotion)
+        let bob:CGFloat = forging ? (model.reducedMotion ? 0 : CGFloat(lift) * (forge.level == 3 ? 1.5 : 0.7)) : row==0 ? (frame==1 || frame==4 ? 1:0):0
         func box(_ x:CGFloat,_ y:CGFloat,_ w:CGFloat,_ h:CGFloat,_ r:CGFloat,_ color:NSColor) {
             let p=NSBezierPath(roundedRect:NSRect(x:x,y:y+bob,width:w,height:h),xRadius:r,yRadius:r)
             color.setFill();p.fill();ink.setStroke();p.lineWidth=1.8;p.stroke()
@@ -31,6 +34,21 @@ extension PetView {
             line(NSPoint(x:-21,y:-11),NSPoint(x:-30,y:2),shell,5)
             line(NSPoint(x:21,y:-11),NSPoint(x:28,y:15),ink,9)
             line(NSPoint(x:21,y:-11),NSPoint(x:28,y:15),shell,5)
+        } else if forging {
+            // One hand steadies the robot while the other works a small steel hammer.
+            line(NSPoint(x:-21,y:-12),NSPoint(x:-24,y:-24),ink,9)
+            line(NSPoint(x:-21,y:-12),NSPoint(x:-24,y:-24),shell,5)
+            let hand = NSPoint(x:36-7*lift, y:-31+33*lift)
+            line(NSPoint(x:21,y:-12),hand,ink,9)
+            line(NSPoint(x:21,y:-12),hand,shell,5)
+            let head = NSPoint(x:hand.x+4,y:hand.y+13)
+            line(NSPoint(x:hand.x-2,y:hand.y-3),head,ink,5)
+            line(NSPoint(x:hand.x-2,y:hand.y-3),head,orange,2.5)
+            // Draw the hammer without body bob so impact meets the anvil precisely.
+            let hammer = NSBezierPath(roundedRect:NSRect(x:head.x-8,y:head.y-4,width:16,height:8),xRadius:2,yRadius:2)
+            NSColor(calibratedRed:0.52,green:0.66,blue:0.70,alpha:1).setFill();hammer.fill()
+            ink.setStroke();hammer.lineWidth=1.7;hammer.stroke()
+            line(NSPoint(x:head.x-5,y:head.y+2),NSPoint(x:head.x+4,y:head.y+2),highlight,1.4)
         } else {
             line(NSPoint(x:-21,y:-12),NSPoint(x:-26,y:-24),ink,9)
             line(NSPoint(x:-21,y:-12),NSPoint(x:-26,y:-24),shell,5)
