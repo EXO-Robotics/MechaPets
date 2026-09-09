@@ -16,7 +16,16 @@ struct ForgeStyle {
     func hammerLift(at time: Double, reducedMotion: Bool) -> Double {
         guard level > 0 && !reducedMotion else { return 0 }
         let phase = phase(at: time)
-        return phase < 0.7 ? sin(phase / 0.7 * .pi / 2) : max(0, 1 - (phase - 0.7) / 0.18)
+        if phase < 0.64 { // Smooth anticipation; the last part of the lift slows down.
+            let t = phase / 0.64
+            return t * t * (3 - 2 * t)
+        }
+        if phase < 0.70 { return 1 } // Brief poised hold makes the strike readable.
+        if phase < 0.88 {
+            let t = (phase - 0.70) / 0.18
+            return 1 - t * t // Accelerate into contact.
+        }
+        return 0
     }
     func impactAge(at time: Double) -> Double {
         guard level > 0 else { return .infinity }
@@ -47,10 +56,14 @@ extension PetView {
         anvil.line(to: NSPoint(x: 54, y: -25))
         anvil.line(to: NSPoint(x: 48, y: -31))
         anvil.line(to: NSPoint(x: 30, y: -31))
-        anvil.close(); metal.setFill(); anvil.fill(); ink.setStroke(); anvil.lineWidth = 1.5; anvil.stroke()
+        anvil.close()
+        NSGradient(starting:metal.blended(withFraction:0.2,of:ink)!,ending:edge)!.draw(in:anvil,angle:90)
+        ink.setStroke(); anvil.lineWidth = 1.5; anvil.stroke()
         let rim = NSBezierPath(); rim.move(to: NSPoint(x: 29, y: -26)); rim.line(to: NSPoint(x: 49, y: -26))
         edge.setStroke(); rim.lineWidth = 1.4; rim.stroke()
 
+        edge.withAlphaComponent(0.5).setFill()
+        for x in [30.0,47.0] { NSBezierPath(ovalIn:NSRect(x:x,y:-40.6,width:2,height:2)).fill() }
         guard style.level > 0 else { return }
         let age = style.impactAge(at: time)
         let impact = reducedMotion ? 0 : max(0, 1 - age / 0.16)
@@ -59,54 +72,55 @@ extension PetView {
         NSBezierPath(ovalIn: NSRect(x: 29, y: -33, width: 25, height: 22)).fill()
         let hot = NSColor(calibratedRed: 1, green: 0.51 + impact * 0.32, blue: 0.21 + impact * 0.25, alpha: 1)
         box(NSRect(x: 35, y: -25, width: 11, height: 4), radius: 1.5, color: hot)
+    }
+
+    // Effects render above the robot so leftward embers are not hidden by its arm.
+    func drawForgeEffects(at position: V, count: Int, time: Double, reducedMotion: Bool) {
+        let style=ForgeStyle(count:count)
+        guard style.level > 0 && !reducedMotion else { return }
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        let transform=NSAffineTransform();transform.translateX(by:position.x,yBy:position.y);transform.concat()
+        let age=style.impactAge(at:time)
+        let impact=max(0,1-age/0.16)
         if !reducedMotion && impact > 0 {
             NSColor(calibratedRed: 1, green: 0.72, blue: 0.28, alpha: 0.16 + impact * 0.38).setFill()
             NSBezierPath(ovalIn: NSRect(x: 35.5, y: -28.2, width: 10.5, height: 7.4)).fill()
             NSColor(calibratedRed: 1, green: 0.92, blue: 0.62, alpha: 0.20 + impact * 0.45).setFill()
             NSBezierPath(ovalIn: NSRect(x: 37.6, y: -26.4, width: 6.2, height: 3.8)).fill()
         }
-        // Deterministic sparks have no retained particle state or unbounded allocation.
-        guard !reducedMotion && age < 0.25 else { return }
-        let progress = age / 0.25
-        func sparkPoint(_ p: Double, x0: Double, y0: Double, vx: Double, vy: Double, grav: Double) -> NSPoint {
-            let t = max(0, min(1, p))
-            let x = min(53.5, max(-53.5, x0 + vx * t))
-            let y = min(53.5, max(-41.8, y0 + vy * t - 0.5 * grav * t * t))
-            return NSPoint(x: x, y: y)
-        }
-        for i in 0..<style.sparkCount {
-            let seed = Double((i * 37 + 11) % 101) / 100
-            let spread = Double((i * 61 + 29) % 101) / 100
-            let hang = Double((i * 89 + 17) % 101) / 100
-            let life = 0.72 + seed * 0.28
-            let fade = max(0, 1 - progress / life)
-            guard fade > 0.02 else { continue }
-            let p = min(1, progress / life)
-            let x0 = 40.0 + (spread - 0.5) * 2.4
-            let y0 = -21.2
-            let vx = -13.5 + spread * 23.0 + (seed - 0.5) * 5.0
-            let levelScale = 0.55 + 0.15 * Double(style.level)
-            let vy = (34 + seed * 40 + hang * 12) * levelScale
-            let grav = 50 + hang * 28
-            let head = sparkPoint(p, x0: x0, y0: y0, vx: vx, vy: vy, grav: grav)
-            let thick: CGFloat = i % 3 == 0 ? 2.05 : 1.25
-            for k in 0..<3 {
-                let p0 = p - Double(k) * 0.085
-                let p1 = p - Double(k + 1) * 0.085
-                guard p0 > 0 else { continue }
-                let a = sparkPoint(p0, x0: x0, y0: y0, vx: vx, vy: vy, grav: grav)
-                let b = sparkPoint(max(0, p1), x0: x0, y0: y0, vx: vx, vy: vy, grav: grav)
-                let ember = NSBezierPath()
-                ember.move(to: a)
-                ember.line(to: b)
-                ember.lineWidth = thick * (1 - CGFloat(k) * 0.28)
-                ember.lineCapStyle = .round
-                let trail = fade * (0.92 - Double(k) * 0.28)
-                NSColor(calibratedRed: 1, green: 0.48 + seed * 0.40 - Double(k) * 0.10, blue: 0.16 + seed * 0.28, alpha: trail).setStroke()
-                ember.stroke()
+        // Two bounded generations allow the last embers to finish during a fast strike.
+        // Vary each strike without random state; no coordinate clamps that pile sparks up.
+        guard !reducedMotion else { return }
+        let strike = Int(floor(max(0,time) * style.strikesPerSecond - 0.88))
+        for generation in 0...1 {
+            let elapsed = age + Double(generation) / style.strikesPerSecond
+            guard elapsed < 0.40 else { continue }
+            for i in 0..<style.sparkCount {
+                let salt = ((strike - generation) % 997 + 997) % 997
+                let seed = Double((i * 37 + salt * 13 + 11) % 101) / 100
+                let spread = Double((i * 61 + salt * 29 + 29) % 101) / 100
+                let life = 0.26 + seed * 0.14
+                let p = elapsed / life
+                guard p < 1 else { continue }
+                let fade = pow(1-p, 1.3)
+                let vx = -32 + spread * 42
+                let vy = (44 + seed * 48) * (0.64 + 0.12 * Double(style.level))
+                func point(_ t:Double) -> NSPoint {
+                    NSPoint(x:40.5 + vx*t, y:-21 + vy*t - 48*t*t)
+                }
+                let head=point(p)
+                for k in 0..<3 {
+                    let t0=max(0,p-Double(k)*0.055),t1=max(0,p-Double(k+1)*0.055)
+                    guard t0 > 0 else { continue }
+                    let trail=NSBezierPath();trail.move(to:point(t0));trail.line(to:point(t1))
+                    trail.lineWidth=(i % 4 == 0 ? 1.8 : 1.1)*(1-CGFloat(k)*0.24)
+                    trail.lineCapStyle = .round
+                    NSColor(calibratedRed:1,green:0.72-Double(k)*0.16,blue:0.22,alpha:fade*(0.85-Double(k)*0.22)).setStroke();trail.stroke()
+                }
+                NSColor(calibratedRed:1,green:0.90,blue:0.58,alpha:fade).setFill()
+                NSBezierPath(ovalIn:NSRect(x:head.x-0.85,y:head.y-0.85,width:1.7,height:1.7)).fill()
             }
-            NSColor(calibratedRed: 1, green: 0.78 + seed * 0.18, blue: 0.42 + seed * 0.28, alpha: fade * 0.95).setFill()
-            NSBezierPath(ovalIn: NSRect(x: head.x - 1.15, y: head.y - 1.05, width: 2.3, height: 2.1)).fill()
         }
     }
 }

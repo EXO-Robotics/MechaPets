@@ -32,13 +32,19 @@ final class PetView: NSView {
             return (4,min(4,Int(p*5)))
         }
         if now-model.lastLanding < 0.14 { return (4,0) }
-        return (0,model.reducedMotion ? 0 : Int(now/0.75)%6)
+        return (0,0) // Grounded artwork uses time; no legacy frame invalidations.
     }
     func refresh() {
         let (r,c)=visualFrame()
         let key="\(r)-\(c)-\(model.position.x)-\(model.position.y)-\(model.flight != nil)"
         let workshopKey=key+"-\(workloadCount ?? -1)-\(model.reducedMotion)"
-        if model.flight != nil || ((workloadCount ?? 0)>0 && !model.reducedMotion) || workshopKey != lastVisual { needsDisplay=true;lastVisual=workshopKey }
+        if model.flight != nil || workshopKey != lastVisual {
+            needsDisplay=true
+        } else if !model.reducedMotion {
+            // Breathing and short blinks repaint only the pet's small drawing area.
+            setNeedsDisplay(NSRect(x:model.position.x-60,y:model.position.y-64,width:120,height:128))
+        }
+        lastVisual=workshopKey
     }
     override func draw(_ dirtyRect:NSRect) {
         NSColor.clear.setFill();dirtyRect.fill(using:.copy)
@@ -68,6 +74,9 @@ final class PetView: NSView {
         var angle:CGFloat=0
         if let f=f,f.ability == .swing { angle=CGFloat(sin(progress*Double.pi)*0.23*(f.end.x>f.start.x ? -1:1)) }
         drawSprite(row:row,col:col,at:p,alpha:quietAlpha,angle:angle)
+        if f == nil, let count=workloadCount {
+            drawForgeEffects(at:p,count:count,time:now,reducedMotion:model.reducedMotion)
+        }
     }
     func drawSprite(row:Int,col:Int,at p:V,alpha:CGFloat,angle:CGFloat) {
         NSGraphicsContext.saveGraphicsState()
@@ -267,6 +276,7 @@ if args.contains("--workload-status") {
     print(String(data:try! JSONEncoder().encode(result),encoding:.utf8)!)
     exit(result.activeCount == nil ? 1:0)
 }
+if args.contains("--art-self-test") { runArtRenderingTests();exit(0) }
 if let i=args.firstIndex(of:"--render-forge-animation"),i+1<args.count { renderForgeAnimation(to:args[i+1]);exit(0) }
 if let i=args.firstIndex(of:"--render-forge-preview"),i+1<args.count { renderForgePreview(to:args[i+1]);exit(0) }
 if let i=args.firstIndex(of:"--render-preview"),i+1<args.count { renderPreview(to:args[i+1]);exit(0) }

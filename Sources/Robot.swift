@@ -18,7 +18,11 @@ extension PetView {
         let forging = model.flight == nil && (workloadCount ?? 0) > 0
         let forge = ForgeStyle(count: workloadCount ?? 0)
         let lift = forge.hammerLift(at: now, reducedMotion: model.reducedMotion)
-        let bob:CGFloat = forging ? (model.reducedMotion ? 0 : CGFloat(lift) * (forge.level == 3 ? 1.5 : 0.7)) : row==0 ? (frame==1 || frame==4 ? 1:0):0
+        let still = model.reducedMotion
+        let impact = forging && !still ? max(0, 1 - forge.impactAge(at: now) / 0.12) : 0
+        let breath = still || airborne ? 0 : sin(now * 2.1) * 0.65
+        let bob: CGFloat = forging ? CGFloat(lift) * 1.5 - CGFloat(impact) * 1.1 : CGFloat(breath)
+        let antennaLag: CGFloat = still ? 0 : CGFloat(sin(now * (forging ? forge.strikesPerSecond * .pi * 2 : 2.1) - 0.7)) * (forging ? 1.8 : 0.8)
         func box(_ x:CGFloat,_ y:CGFloat,_ w:CGFloat,_ h:CGFloat,_ r:CGFloat,_ color:NSColor) {
             let p=NSBezierPath(roundedRect:NSRect(x:x,y:y+bob,width:w,height:h),xRadius:r,yRadius:r)
             color.setFill();p.fill();ink.setStroke();p.lineWidth=1.8;p.stroke()
@@ -26,7 +30,7 @@ extension PetView {
         func plated(_ x:CGFloat,_ y:CGFloat,_ w:CGFloat,_ h:CGFloat,_ r:CGFloat,_ color:NSColor) {
             let rect=NSRect(x:x,y:y+bob,width:w,height:h)
             let p=NSBezierPath(roundedRect:rect,xRadius:r,yRadius:r)
-            color.setFill();p.fill()
+            NSGradient(starting:color.blended(withFraction:0.18,of:ink)!, ending:color.blended(withFraction:0.28,of:shine)!)!.draw(in:p,angle:90)
             NSGraphicsContext.saveGraphicsState()
             p.addClip()
             highlight.withAlphaComponent(0.28).setFill()
@@ -73,7 +77,7 @@ extension PetView {
             rim.lineCapStyle = .round;rim.lineWidth=1.15;amber.setStroke();rim.stroke()
         }
         // Short, articulated boots: they tuck up during jumps.
-        let footY:CGFloat=airborne ? -27:-36
+        let footY:CGFloat=(airborne ? -27 : -36) - bob // Feet stay planted while the torso compresses.
         box(-21,footY,16,11,3.4,ink);box(-22,footY,7,7,2.2,ink)
         box(5,footY,16,11,3.4,ink);box(15,footY,7,7,2.2,ink)
         steel.withAlphaComponent(0.42).setFill()
@@ -85,15 +89,24 @@ extension PetView {
         shine.withAlphaComponent(0.34).setFill()
         NSBezierPath(roundedRect:NSRect(x:-6.2,y:-18.8+bob,width:12.4,height:3.4),xRadius:1.4,yRadius:1.4).fill()
         if forging {
-            let pulse=CGFloat(1 - lift) * (0.18 + 0.10 * CGFloat(forge.level))
+            let pulse: CGFloat = still ? 0.10 : CGFloat(impact) * (0.18 + 0.10 * CGFloat(forge.level))
             amber.withAlphaComponent(0.28+pulse).setFill()
             NSBezierPath(roundedRect:NSRect(x:-5,y:-18+bob,width:10,height:5),xRadius:2,yRadius:2).fill()
         }
         line(NSPoint(x:0,y:-18+bob),NSPoint(x:0,y:-14+bob),highlight,2)
         func arm(_ from:NSPoint,_ to:NSPoint) {
-            line(from,to,ink,9.2);line(from,to,shell,5.2)
+            let dx=to.x-from.x,dy=to.y-from.y
+            let distance=max(0.001,hypot(dx,dy))
+            let reach:CGFloat=(airborne || (forging && from.x > 0)) ? 15.5 : 8.5
+            let bend=sqrt(max(0,reach*reach-distance*distance/4))
+            let side:CGFloat=from.x < 0 || forging ? -1 : 1
+            let elbow=NSPoint(x:(from.x+to.x)/2-side*dy/distance*bend,y:(from.y+to.y)/2+side*dx/distance*bend)
+            for (a,b) in [(from,elbow),(elbow,to)] {
+                line(a,b,ink,8);line(a,b,plate,5)
+                line(NSPoint(x:a.x-0.7,y:a.y+0.8),NSPoint(x:b.x-0.7,y:b.y+0.8),highlight.withAlphaComponent(0.65),1.3)
+            }
             joint(from.x,from.y,4.1)
-            joint((from.x+to.x)*0.5,(from.y+to.y)*0.5,3.1)
+            joint(elbow.x,elbow.y,3.1)
         }
         // Arms can reach toward the tether without changing the body silhouette.
         var hammerHead=NSPoint.zero
@@ -104,25 +117,32 @@ extension PetView {
             arm(NSPoint(x:21,y:-11),NSPoint(x:28,y:15))
         } else if forging {
             // One hand steadies the robot while the other works a small steel hammer.
-            arm(NSPoint(x:-21,y:-12),NSPoint(x:-24,y:-24))
-            joint(-24,-24,3.4)
+            arm(NSPoint(x:-21,y:-12+bob),NSPoint(x:-18,y:-24))
+            joint(-18,-24,3.4)
             let t=CGFloat(lift)
             // Hammer head sits on the anvil face at rest; raise tilts it back. Drawn without bob.
-            hammerHead=NSPoint(x:41-9*t,y:-20.2+37*t)
-            hammerHand=NSPoint(x:29.5-2*t,y:-23.5+29*t)
+            hammerHead=NSPoint(x:40.5-9*t,y:-16.9+34*t)
             hammerTilt = -0.72 * t
-            arm(NSPoint(x:21,y:-12),hammerHand)
+            // Fixed-length handle, perpendicular to the hammer face at every pose.
+            hammerHand=NSPoint(x:hammerHead.x+sin(hammerTilt)*13,y:hammerHead.y-cos(hammerTilt)*13)
+            arm(NSPoint(x:21,y:-12+bob),hammerHand)
         } else {
             arm(NSPoint(x:-21,y:-12),NSPoint(x:-26,y:-24))
             arm(NSPoint(x:21,y:-12),NSPoint(x:26,y:-24))
             joint(-26,-24,3.2);joint(26,-24,3.2)
         }
+        // A little head follow-through sells the weight of each blow.
+        NSGraphicsContext.saveGraphicsState()
+        let headMotion=NSAffineTransform()
+        headMotion.translateX(by:forging ? CGFloat(lift)*0.7 : 0,yBy:0)
+        headMotion.rotate(byRadians:forging && !still ? CGFloat(lift)*(-0.025)+CGFloat(impact)*0.018 : 0)
+        headMotion.concat()
         // Angular receiver fins and an amber antenna distinguish the character.
         fin(baseX:-27,pointing:-1);fin(baseX:27,pointing:1)
-        line(NSPoint(x:0,y:31+bob),NSPoint(x:0,y:40+bob),ink,3.2)
-        line(NSPoint(x:0,y:31+bob),NSPoint(x:0,y:39+bob),plate,1.6)
-        orange.setFill();NSBezierPath(ovalIn:NSRect(x:-3.4,y:37.4+bob,width:6.8,height:6.8)).fill()
-        amber.setFill();NSBezierPath(ovalIn:NSRect(x:-1.8,y:39.2+bob,width:3.2,height:3.0)).fill()
+        line(NSPoint(x:0,y:31+bob),NSPoint(x:antennaLag,y:40+bob),ink,3.2)
+        line(NSPoint(x:0,y:31+bob),NSPoint(x:antennaLag,y:39+bob),plate,1.6)
+        orange.setFill();NSBezierPath(ovalIn:NSRect(x:-3.4+antennaLag,y:37.4+bob,width:6.8,height:6.8)).fill()
+        amber.setFill();NSBezierPath(ovalIn:NSRect(x:-1.8+antennaLag,y:39.2+bob,width:3.2,height:3.0)).fill()
         plated(-27,-3,54,36,10,shell)
         box(-10,-6,20,7,3,plate)
         line(NSPoint(x:-6,y:-2.5+bob),NSPoint(x:6,y:-2.5+bob),highlight,1.1)
@@ -144,10 +164,10 @@ extension PetView {
             highlight.setFill();NSBezierPath(ovalIn:NSRect(x:x-0.9,y:y-0.2+bob,width:2.1,height:2.0)).fill()
         }
         rivet(-23.2,8.5);rivet(23.2,8.5)
-        let blink=row==0 && frame==4
-        let lookX:CGFloat = forging ? 1.25 : (airborne ? 0 : 0)
+        let blink = !still && !airborne && now.truncatingRemainder(dividingBy: 4.7) > 4.55
+        let lookX:CGFloat = forging ? 1.25 : (still ? 0 : CGFloat(sin(now * 0.65)) * 0.65)
         let lookY:CGFloat = forging ? -0.85 : (airborne ? 0.45 : 0)
-        let squint:CGFloat = forging ? (0.18 + CGFloat(1 - lift) * (forge.level >= 3 ? 0.38 : 0.16)) : 0
+        let squint:CGFloat = forging ? (still ? 0.12 : 0.18 + CGFloat(impact) * (forge.level >= 3 ? 0.38 : 0.16)) : 0
         func eye(_ x:CGFloat) {
             let h=11.2 - squint*3.4
             let oy:CGFloat=10.2 + squint*1.4
@@ -185,6 +205,11 @@ extension PetView {
         } else {
             eye(-13.2);eye(5.2)
         }
+        // Small smile lives on the visor, separate from the chin vents.
+        let smile=NSBezierPath()
+        smile.move(to:NSPoint(x:-3,y:8.8+bob))
+        smile.curve(to:NSPoint(x:3,y:8.8+bob),controlPoint1:NSPoint(x:-1.4,y:(forging ? 7.7 : 6.5)+bob),controlPoint2:NSPoint(x:1.4,y:(forging ? 7.7 : 6.5)+bob))
+        smile.lineWidth=1.1;smile.lineCapStyle = .round;highlight.withAlphaComponent(0.8).setStroke();smile.stroke()
         let browDrop:CGFloat = forging ? (0.55 + squint*1.15) : (airborne ? -0.75 : 0)
         line(NSPoint(x:-15.6,y:23.7+bob-browDrop),NSPoint(x:-6.1,y:24.3+bob-browDrop*0.3),highlight.withAlphaComponent(0.62),1.35)
         line(NSPoint(x:6.1,y:24.3+bob-browDrop*0.3),NSPoint(x:15.6,y:23.7+bob-browDrop),highlight.withAlphaComponent(0.62),1.35)
@@ -195,6 +220,7 @@ extension PetView {
         line(NSPoint(x:-5.4,y:0.15+bob-grin),NSPoint(x:-3.1,y:0.15+bob-grin),ink,1.15)
         line(NSPoint(x:-1.15,y:-0.25+bob-grin*1.2),NSPoint(x:1.15,y:-0.25+bob-grin*1.2),ink,1.15)
         line(NSPoint(x:3.1,y:0.15+bob-grin),NSPoint(x:5.4,y:0.15+bob-grin),ink,1.15)
+        NSGraphicsContext.restoreGraphicsState() // Head motion does not move the hammer.
         if forging {
             // Draw the hammer without body bob so impact meets the anvil precisely.
             joint(hammerHand.x,hammerHand.y,3.5)
@@ -220,8 +246,8 @@ extension PetView {
             shine.withAlphaComponent(0.5).setFill()
             NSBezierPath(ovalIn:NSRect(x:7.4,y:-0.6,width:2.4,height:1.8)).fill()
             line(NSPoint(x:-6.5,y:1.6),NSPoint(x:5.4,y:1.6),shine,1.25)
-            if lift < 0.22 {
-                let hot=CGFloat(1 - lift / 0.22)
+            if impact > 0 {
+                let hot=CGFloat(impact)
                 NSColor(calibratedRed:1,green:0.62,blue:0.22,alpha:0.18+0.28*hot).setFill()
                 NSBezierPath(ovalIn:NSRect(x:-6,y:-3.2,width:12,height:6.4)).fill()
             }

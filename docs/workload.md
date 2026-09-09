@@ -61,3 +61,19 @@ The build already runs `--self-test`; rerun it directly when useful during devel
 `--workload-status` prints JSON containing `status` and, when available, `activeCount`. An unavailable result omits the count and has a nonzero exit status. This command uses `CODEX_HOME`, falling back to `~/.codex`; it does not use the desktop app’s saved folder-picker preference.
 
 The UI smoke test needs a logged-in graphical macOS session. It exercises native controls and visual state changes; it does not establish exhaustive screen-layout or live multi-task behavior. Use the four labeled previews to inspect animation levels, then observe a normal local task start and finish to check the live adapter. Do not publish private task data or desktop content as test evidence.
+
+### Expressive workshop artwork
+
+Version 0.3 adds planted feet, breathing, short blinks, head and antenna follow-through,
+a poised hammer wind-up, rigid tool geometry, and an impact recoil. Sparks vary by
+strike and render in front of the arm; at most two generations (32 sparks) are drawn.
+Reduced motion uses a relaxed, fully static pose with no emitted particles.
+
+To check native artwork bounds and reduced-motion stability on a Mac with a desktop session:
+
+```sh
+./MechaPets.app/Contents/MacOS/MechaPets --art-self-test
+```
+
+This rasterizes 1,200 frames across all workload levels and compares reduced-motion
+pixels over time. The normal build also checks hammer contact and cadence.

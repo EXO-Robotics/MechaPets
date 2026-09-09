@@ -59,6 +59,14 @@ func runWorkloadTests() {
         check(style.sparkCount>previous.sparkCount,"workload ramps sparks")
         check(style.hammerLift(at:0.2,reducedMotion:true)==0,"reduced motion stops hammer")
         check(style.impactAge(at:0.881/style.strikesPerSecond)<0.002,"sparks synchronized with impact")
+        check(style.hammerLift(at:0.67/style.strikesPerSecond,reducedMotion:false)==1,"hammer pauses at full lift before striking")
+        check(style.hammerLift(at:0.879/style.strikesPerSecond,reducedMotion:false)>0,"hammer stays above workpiece before impact")
+        check(style.hammerLift(at:0.881/style.strikesPerSecond,reducedMotion:false)==0,"hammer contacts workpiece when sparks fire")
+        for sample in 0...100 {
+            let t=Double(sample)/100/style.strikesPerSecond
+            let lift=style.hammerLift(at:t,reducedMotion:false)
+            check(lift>=0 && lift<=1,"hammer never penetrates workpiece or overshoots wind-up")
+        }
     }
     check(ForgeStyle(count:900).sparkCount==ForgeStyle(count:3).sparkCount,"frenzy has bounded particles")
     check(ForgeStyle(count:-1).level==0,"negative count clamps")
@@ -115,4 +123,44 @@ func renderForgeAnimation(to path:String) {
         }
     }
     precondition(CGImageDestinationFinalize(destination))
+}
+
+// Native raster regression: run on a Mac with a WindowServer using --art-self-test.
+// Exercises actual drawing, including compositing order, for all four workload levels.
+func runArtRenderingTests() {
+    _ = NSApplication.shared
+    let view=PetView(frame:NSRect(x:0,y:0,width:180,height:180))
+    view.model=Motion(bounds:view.bounds,position:V(x:90,y:90))
+    var frames=0,violations=0,maxX=0,maxY=0
+    for reduced in [false,true] {
+        for count in 0...3 {
+            var stillPixels: Data?
+            for step in 0..<150 {
+                autoreleasepool {
+                    let rep=NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:180,pixelsHigh:180,bitsPerSample:8,samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,bitmapFormat:[],bytesPerRow:0,bitsPerPixel:0)!
+                    memset(rep.bitmapData!,0,rep.bytesPerRow*180)
+                    NSGraphicsContext.saveGraphicsState()
+                    NSGraphicsContext.current=NSGraphicsContext(bitmapImageRep:rep)!
+                    view.workloadCount=count;view.now=Double(step)/29
+                    view.model.reducedMotion=reduced
+                    view.draw(view.bounds)
+                    NSGraphicsContext.restoreGraphicsState()
+                    let bytes=rep.bitmapData!
+                    if reduced {
+                        let data=Data(bytes:bytes,count:rep.bytesPerRow*180)
+                        if let reference=stillPixels { precondition(data==reference,"Reduced motion artwork changed over time") }
+                        else { stillPixels=data }
+                    }
+                    for y in 0..<180 { for x in 0..<180 where bytes[y*rep.bytesPerRow+x*4+3]>8 {
+                        let dx=abs(x-90),dy=abs(y-90)
+                        maxX=max(maxX,dx);maxY=max(maxY,dy)
+                        if dx>60 || dy>64 { violations+=1 }
+                    }}
+                    frames+=1
+                }
+            }
+        }
+    }
+    precondition(violations==0,"Artwork exceeded cursor-avoidance drawing margin")
+    print("PASS: \(frames) native frames; extents ±\(maxX)x±\(maxY); zero out-of-margin pixels; reduced-motion pixels identical across time.")
 }
