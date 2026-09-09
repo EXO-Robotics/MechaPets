@@ -66,7 +66,9 @@ The UI smoke test needs a logged-in graphical macOS session. It exercises native
 
 Version 0.3 adds planted feet, breathing, short blinks, head and antenna follow-through,
 a poised hammer wind-up, rigid tool geometry, and an impact recoil. Sparks vary by
-strike and render in front of the arm; at most two generations (32 sparks) are drawn.
+strike and render in front of the arm; level two emits 28 sparks per strike at 2.8 strikes/second, and level three emits
+72 per strike at 5 strikes/second. Up to five generations (360 sparks) overlap
+for a dense frenzy, with a wider, taller spread and stronger body recoil.
 Reduced motion uses a relaxed, fully static pose with no emitted particles.
 
 To check native artwork bounds and reduced-motion stability on a Mac with a desktop session:
@@ -76,4 +78,5 @@ To check native artwork bounds and reduced-motion stability on a Mac with a desk
 ```
 
 This rasterizes 1,200 frames across all workload levels and compares reduced-motion
-pixels over time. The normal build also checks hammer contact and cadence.
+pixels over time. It also measures 270 effect frames to require a strong visual
+increase between levels. The normal build checks hammer contact and cadence.

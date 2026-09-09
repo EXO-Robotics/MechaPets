@@ -21,8 +21,8 @@ extension PetView {
         let still = model.reducedMotion
         let impact = forging && !still ? max(0, 1 - forge.impactAge(at: now) / 0.12) : 0
         let breath = still || airborne ? 0 : sin(now * 2.1) * 0.65
-        let bob: CGFloat = forging ? CGFloat(lift) * 1.5 - CGFloat(impact) * 1.1 : CGFloat(breath)
-        let antennaLag: CGFloat = still ? 0 : CGFloat(sin(now * (forging ? forge.strikesPerSecond * .pi * 2 : 2.1) - 0.7)) * (forging ? 1.8 : 0.8)
+        let bob: CGFloat = forging ? CGFloat(lift) * (forge.level == 3 ? 3.8 : forge.level == 2 ? 2.3 : 1.5) - CGFloat(impact) * (forge.level == 3 ? 2.4 : 1.1) : CGFloat(breath)
+        let antennaLag: CGFloat = still ? 0 : CGFloat(sin(now * (forging ? forge.strikesPerSecond * .pi * 2 : 2.1) - 0.7)) * (forging ? (forge.level == 3 ? 3.4 : 1.8) : 0.8)
         func box(_ x:CGFloat,_ y:CGFloat,_ w:CGFloat,_ h:CGFloat,_ r:CGFloat,_ color:NSColor) {
             let p=NSBezierPath(roundedRect:NSRect(x:x,y:y+bob,width:w,height:h),xRadius:r,yRadius:r)
             color.setFill();p.fill();ink.setStroke();p.lineWidth=1.8;p.stroke()
@@ -134,7 +134,7 @@ extension PetView {
         // A little head follow-through sells the weight of each blow.
         NSGraphicsContext.saveGraphicsState()
         let headMotion=NSAffineTransform()
-        headMotion.translateX(by:forging ? CGFloat(lift)*0.7 : 0,yBy:0)
+        headMotion.translateX(by:forging && !still ? CGFloat(lift)*0.7 + (forge.level == 3 ? CGFloat(sin(now*45))*0.9 : 0) : 0,yBy:0)
         headMotion.rotate(byRadians:forging && !still ? CGFloat(lift)*(-0.025)+CGFloat(impact)*0.018 : 0)
         headMotion.concat()
         // Angular receiver fins and an amber antenna distinguish the character.

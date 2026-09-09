@@ -163,4 +163,28 @@ func runArtRenderingTests() {
     }
     precondition(violations==0,"Artwork exceeded cursor-avoidance drawing margin")
     print("PASS: \(frames) native frames; extents ±\(maxX)x±\(maxY); zero out-of-margin pixels; reduced-motion pixels identical across time.")
+    // Measure actual composited effect coverage, not just configured particle counts.
+    // This catches regressions where denser levels still look faint despite higher counts.
+    var coverage=[Double]()
+    for count in 1...3 {
+        var total=0.0
+        for step in 0..<90 {
+            autoreleasepool {
+                let rep=NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:180,pixelsHigh:180,bitsPerSample:8,samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,bitmapFormat:[],bytesPerRow:0,bitsPerPixel:0)!
+                memset(rep.bitmapData!,0,rep.bytesPerRow*180)
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current=NSGraphicsContext(bitmapImageRep:rep)!
+                view.drawForgeEffects(at:V(x:90,y:90),count:count,time:5+Double(step)/30,reducedMotion:false)
+                NSGraphicsContext.restoreGraphicsState()
+                for y in 0..<180 { for x in 0..<180 {
+                    total += Double(rep.bitmapData![y*rep.bytesPerRow+x*4+3])/255
+                }}
+            }
+        }
+        coverage.append(total/90)
+    }
+    precondition(coverage[1]>coverage[0]*3,"Level two must have a clearly larger visible spark shower than calm")
+    precondition(coverage[2]>coverage[1]*2,"Frenzy must have at least twice the visible effect coverage of busy")
+    print(String(format:"PASS: mean visible effect coverage: calm %.1f, busy %.1f, frenzy %.1f pixels.",coverage[0],coverage[1],coverage[2]))
+
 }

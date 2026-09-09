@@ -3,8 +3,10 @@ import AppKit
 
 struct ForgeStyle {
     let level: Int
-    var strikesPerSecond: Double { [0, 1.0, 2.0, 3.3][level] }
-    var sparkCount: Int { [0, 5, 10, 16][level] }
+    var strikesPerSecond: Double { [0, 1.0, 2.8, 5.0][level] }
+    var sparkCount: Int { [0, 5, 28, 72][level] }
+    var sparkLifetime: Double { [0, 0.40, 0.72, 0.90][level] }
+    var sparkGenerations: Int { max(1, Int(ceil(sparkLifetime * strikesPerSecond))) }
     var glow: Double { [0, 0.45, 0.72, 1.0][level] }
     init(count: Int) { level = min(3, max(0, count)) }
 
@@ -89,37 +91,40 @@ extension PetView {
             NSColor(calibratedRed: 1, green: 0.92, blue: 0.62, alpha: 0.20 + impact * 0.45).setFill()
             NSBezierPath(ovalIn: NSRect(x: 37.6, y: -26.4, width: 6.2, height: 3.8)).fill()
         }
-        // Two bounded generations allow the last embers to finish during a fast strike.
+        // Retain enough bounded generations for a continuous shower at levels 2 and 3.
         // Vary each strike without random state; no coordinate clamps that pile sparks up.
         guard !reducedMotion else { return }
         let strike = Int(floor(max(0,time) * style.strikesPerSecond - 0.88))
-        for generation in 0...1 {
+        for generation in 0..<style.sparkGenerations {
             let elapsed = age + Double(generation) / style.strikesPerSecond
-            guard elapsed < 0.40 else { continue }
+            guard elapsed < style.sparkLifetime else { continue }
             for i in 0..<style.sparkCount {
                 let salt = ((strike - generation) % 997 + 997) % 997
                 let seed = Double((i * 37 + salt * 13 + 11) % 101) / 100
                 let spread = Double((i * 61 + salt * 29 + 29) % 101) / 100
-                let life = 0.26 + seed * 0.14
+                let life = style.sparkLifetime * (0.72 + seed * 0.28)
                 let p = elapsed / life
                 guard p < 1 else { continue }
-                let fade = pow(1-p, 1.3)
-                let vx = -32 + spread * 42
-                let vy = (44 + seed * 48) * (0.64 + 0.12 * Double(style.level))
+                let fade = pow(1-p, style.level == 1 ? 1.3 : 0.65)
+                let vx = style.level == 1 ? -32 + spread * 42 : -(style.level == 3 ? 82.0 : 64.0) + spread * (style.level == 3 ? 94.0 : 76.0)
+                let vy = style.level == 1 ? (44 + seed * 48) * 0.76 : (style.level == 3 ? 92 : 78) + seed * (style.level == 3 ? 48 : 38)
+                let gravity = style.level == 1 ? 48.0 : 72.0
                 func point(_ t:Double) -> NSPoint {
-                    NSPoint(x:40.5 + vx*t, y:-21 + vy*t - 48*t*t)
+                    NSPoint(x:40.5 + vx*t, y:-21 + vy*t - gravity*t*t)
                 }
                 let head=point(p)
                 for k in 0..<3 {
-                    let t0=max(0,p-Double(k)*0.055),t1=max(0,p-Double(k+1)*0.055)
+                    let tail = style.level == 1 ? 0.055 : (style.level == 2 ? 0.075 : 0.095)
+                    let t0=max(0,p-Double(k)*tail),t1=max(0,p-Double(k+1)*tail)
                     guard t0 > 0 else { continue }
                     let trail=NSBezierPath();trail.move(to:point(t0));trail.line(to:point(t1))
-                    trail.lineWidth=(i % 4 == 0 ? 1.8 : 1.1)*(1-CGFloat(k)*0.24)
+                    trail.lineWidth=(i % 4 == 0 ? 1.8 : 1.1)*(style.level == 1 ? 1 : style.level == 2 ? 1.35 : 1.65)*(1-CGFloat(k)*0.24)
                     trail.lineCapStyle = .round
                     NSColor(calibratedRed:1,green:0.72-Double(k)*0.16,blue:0.22,alpha:fade*(0.85-Double(k)*0.22)).setStroke();trail.stroke()
                 }
                 NSColor(calibratedRed:1,green:0.90,blue:0.58,alpha:fade).setFill()
-                NSBezierPath(ovalIn:NSRect(x:head.x-0.85,y:head.y-0.85,width:1.7,height:1.7)).fill()
+                let radius:CGFloat=style.level == 1 ? 0.85 : (i % 5 == 0 ? 1.6 : 1.1)
+                NSBezierPath(ovalIn:NSRect(x:head.x-radius,y:head.y-radius,width:radius*2,height:radius*2)).fill()
             }
         }
     }
